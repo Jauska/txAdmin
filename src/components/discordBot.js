@@ -1,9 +1,9 @@
 //Requires
 const fs = require('fs-extra');
 const Discord = require('discord.js');
+const humanizeDuration = require('humanize-duration');
 const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../extras/console');
 const context = 'DiscordBot';
-const humanizeDuration = require('humanize-duration');
 
 
 module.exports = class DiscordBot {
@@ -152,7 +152,7 @@ module.exports = class DiscordBot {
             out = new Discord.RichEmbed();
             out.setTitle(`${globals.config.serverName} uses txAdmin v${globals.version.current}!`);
             out.setColor(0x4DEEEA);
-            out.setDescription(`Checkout the project:\n Forum: https://forum.fivem.net/t/530475\n Discord: https://discord.gg/f3TsfvD`);
+            out.setDescription(`Checkout the project:\n GitHub: https://github.com/tabarra/txAdmin\n Discord: https://discord.gg/f3TsfvD`);
 
         }else{
             //Finds the command
@@ -173,7 +173,12 @@ module.exports = class DiscordBot {
 
         //Sending message
         try {
-            await message.channel.send(out);
+            let outMsg = await message.channel.send(out);
+            //Example: if you want to delete the messages after a few seconds.
+            // setTimeout(() => {
+            //     outMsg.delete()
+            //     message.delete()
+            // }, 10*1000);
         } catch (error) {
             logError(`Failed to send message with error: ${error.message}`, context);
         }

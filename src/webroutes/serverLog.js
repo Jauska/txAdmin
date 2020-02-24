@@ -126,12 +126,17 @@ function processEventTypes(event){
         }
 
     }else if(event.action === 'explosionEvent'){
-        return `caused an explosion`;
+        let expType = event.data.explosionType || 'UNKNOWN';
+        return `caused an explosion (${expType})`;
+
+    }else if(event.action === 'CommandExecuted'){
+        let command = event.data || 'unknown';
+        return `executed: /${xss(command)}`;
 
     }else if(event.action === 'txAdminClient:Started'){
         return `txAdminClient Logger started`;
 
-    }else if(event.action === 'txAdminClient:DebugMessage'){
+    }else if(event.action === 'DebugMessage'){
         let message = event.data || 'unknown';
         return `txAdminClient Debug Message: <span class="text-warning">${xss(message)}</span>`;
 

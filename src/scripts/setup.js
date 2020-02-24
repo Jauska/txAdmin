@@ -206,7 +206,7 @@ if (osType === 'Linux') {
         configSkeletal.global.publicIP = wanIP;
         log(`Public IP detected as ${wanIP}. You can change that in the settings.`, context)
     } catch (error) {
-        logWarn('Error detecting your public IP. You can change that in the settings.', context)
+        logWarn('Failed to detect your public IP. You can change that in the settings.', context)
     }
 
     //Create new profile folder
@@ -217,12 +217,12 @@ if (osType === 'Linux') {
         fs.mkdirSync(`${profilePath}/logs/`);
         fs.mkdirSync(`${profilePath}/data/`);
         fs.writeFileSync(`${profilePath}/messages.json`, '[]');
-        fs.writeFileSync(`${profilePath}/commands.json`, '[]');
+        // fs.writeFileSync(`${profilePath}/commands.json`, '[]');
         fs.writeFileSync(`${profilePath}/config.json`, jsonConfig);
 
         if(!isLinux){
-            let batch = `@echo off\r\n cd ../..\r\n node src ${serverProfile}\r\n pause`;
-            fs.writeFileSync(`${profilePath}/start.bat`, batch);
+            let batch = `@echo off\r\n node src ${serverProfile}\r\n pause`;
+            fs.writeFileSync(`start_${serverProfile}.bat`, batch);
         }
     } catch (error) {
         logError(`Error setting up folder structure in '${profilePath}'`, context);
@@ -236,7 +236,7 @@ if (osType === 'Linux') {
     let cmd = ac.inverse(` node src ${serverProfile} `);
     logOk(`To start txAdmin with this profile run: ${cmd}`, context);
     if(!isLinux){
-        let cmd2 = ac.inverse(` ${profilePath}start.bat `);
+        let cmd2 = ac.inverse(` txAdmin/start_${serverProfile}.bat `);
         logOk(`You can also execute: ${cmd2}`, context);
     }
     process.exit();

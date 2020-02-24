@@ -6,7 +6,7 @@
 		<img width="420" height="237" src="https://i.imgur.com/acV0dfO.png">
 	</p>
 	<h4 align="center">
-		FiveM Forum thread: &nbsp; <a href="https://forum.fivem.net/t/530475"><img src="https://img.shields.io/badge/dynamic/json.svg?color=green&label=txAdmin&query=views&suffix=%20views&url=https%3A%2F%2Fforum.fivem.net%2Ft%2F530475.json"></img></a>  <br/>
+		<!-- FiveM Forum thread: &nbsp; <a href="https://forum.fivem.net/t/530475"><img src="https://img.shields.io/badge/dynamic/json.svg?color=green&label=txAdmin&query=views&suffix=%20views&url=https%3A%2F%2Fforum.fivem.net%2Ft%2F530475.json"></img></a>  <br/> -->
 		Join our Discord Server: &nbsp; <a href="https://discord.gg/f3TsfvD"><img src="https://discordapp.com/api/guilds/577993482761928734/widget.png?style=shield"></img></a>
 	</h4>
 	<p align="center">
@@ -39,21 +39,20 @@
 - Restart warning announcements
 - Admin Management system
 - Permissions system ([more info](docs/permissions.md))
-- (BETA) SSL Support ([more info](docs/ssl_support.md))
+- SSL Support ([more info](docs/ssl_support.md))
 - Translation Support ([more info](docs/translation.md))
-- (BETA) Server Activity Log (connections/disconnections, kills, chat and explosions)
+- Server Activity Log (connections/disconnections, kills, chat, explosions and [custom commands](docs/extra_logging.md))
 - (BETA) Ban System
 - FiveM's Server CFG editor
 
 
-## Installing & Running
+## Installing & Running (Windows/Linux)
 
-**Video Tutorial [ENGLISH]:** https://youtu.be/S0tBq7Q8YaQ  
-**Video Tutorial [PT_BR]:** https://youtu.be/vcM75_E6wmU
+**Video Tutorial for Windows**: [ENGLISH](https://youtu.be/S0tBq7Q8YaQ), [PORTUGUÊS](https://youtu.be/vcM75_E6wmU).
 
 **Requirements**:
-- NodeJS v10 LTS (or v12)
-- FXServer build 1543+ [(duh)](https://runtime.fivem.net/artifacts/fivem/)
+- NodeJS v10 LTS (or newer)
+- FXServer build 1543+ [(or newer)](https://runtime.fivem.net/artifacts/fivem/)
 - One TCP listen port opened for the web server (default is 40120)
 - Git (only for installs and updates)
 
@@ -73,17 +72,19 @@ node src/scripts/setup.js default
 # Start default server
 node src/index.js default
 ```
+**If on Windows, you can start txAdmin by executing `start_<profilename>.bat` in your txAdmin folder (ex `txAdmin/start_default.bat`).**  
 
 **2 -** Then open `http://public-ip:40120/` in your browser and login with the credentials created and go to the settings page to configure the remaining settings.   
-**If on Windows, you can start txAdmin by executing `start.bat` in your server profile's folder (example `data/default/start.bat`).**  
 
-> **Note:** You should run FXServer **through** txAdmin, and not in parallel (ie in another terminal).  
+**Important Notes:**  
+> **Note:** You MUST run FXServer **through** txAdmin, and not in parallel (ie in another terminal).  
 
 > **Note2:** To configure your Discord bot, follow these two guides:  [Setting up a bot application](https://discordjs.guide/preparations/setting-up-a-bot-application.html) and [Adding your bot to servers](https://discordjs.guide/preparations/adding-your-bot-to-servers.html).  
 
-> **Note3:** Although **not recommended**, you can set FXServer processes priorities. To do so, change `fxRunner.setPriority` in the `config.json` to one of the following: LOW, BELOW_NORMAL, NORMAL, ABOVE_NORMAL, HIGH, HIGHEST.  
+> **Note3:** You can run multiple txAdmin instances in the same installation folder.  
+> To create more server profiles, execute `node src/scripts/setup.js <profile name>`. 
 
-> **Note4:** To create more server profiles, execute `node src/scripts/setup.js <profile name>`. You can run multiple txAdmin instances in the same installation folder. 
+> **Note4:** Although **not recommended**, you can set FXServer processes priorities. To do so, change `fxRunner.setPriority` in the `config.json` to one of the following: LOW, BELOW_NORMAL, NORMAL, ABOVE_NORMAL, HIGH, HIGHEST.  
 
 ## Troubleshooting
 ### If you run into any problem, check our [Troubleshooting Guide](docs/troubleshooting.md).   

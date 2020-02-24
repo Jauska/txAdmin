@@ -3,6 +3,7 @@ const os = require('os');
 const axios = require("axios");
 const bytes = require('bytes');
 const pidusageTree = require('pidusage-tree');
+const humanizeDuration = require('humanize-duration');
 const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../extras/console');
 const webUtils = require('./webUtils.js');
 const Cache = require('../extras/dataCache');
@@ -28,24 +29,14 @@ module.exports = async function action(res, req) {
     let timeStart = new Date();
     let data = {
         headerTitle: 'Full Report',
-        message: '',
-        host: {},
-        fxserver: {},
-        proccesses: [],
-        config: {
-            timeout: globals.monitor.config.timeout,
-            failures: globals.monitor.config.restarter.failures,
-            schedule: globals.monitor.config.restarter.schedule.join(', '),
-            buildPath: globals.fxRunner.config.buildPath,
-            basePath: globals.fxRunner.config.basePath,
-            cfgPath: globals.fxRunner.config.cfgPath,
-        }
+        message: ''
     };
 
-    [data.host, data.proccesses, data.fxserver] = await Promise.all([
+    [data.host, data.txadmin, data.fxserver, data.proccesses] = await Promise.all([
         getHostData(),
+        gettxAdminData(),
+        getFXServerData(),
         getProcessesData(),
-        getFXServerData()
     ]);
 
 
@@ -89,7 +80,11 @@ async function getProcessesData(){
                 order = 0;
 
             }else if(pid == termPID){
-                procName = 'Terminal';
+                if(globals.config.osType === 'Linux' && Object.keys(processes).length == 2){
+                    procName = 'FXServer';
+                }else{
+                    procName = 'Terminal';
+                }
                 order = 1;
 
             }else if(pid == fxsvMainPID){
@@ -140,9 +135,12 @@ async function getProcessesData(){
  * Gets the FXServer Data.
  */
 async function getFXServerData(){
+    //Sanity Check
     if(!globals.config.forceFXServerPort && !globals.fxRunner.fxServerPort){
         return {error: `Server Offline`}
     }
+
+    //Preparing request
     let port = (globals.config.forceFXServerPort)? globals.config.forceFXServerPort : globals.fxRunner.fxServerPort;
     let requestOptions = {
         url: `http://localhost:${port}/info.json`,
@@ -152,27 +150,53 @@ async function getFXServerData(){
         maxRedirects: 0,
         timeout: globals.monitor.config.timeout
     }
+    let infoData;
 
-    let fxData = {};
+    //Making HTTP Request
     try {
         let res = await axios(requestOptions);
-        let data = res.data;
-
-        fxData.statusColor = 'success';
-        fxData.status = 'ONLINE';
-        fxData.version = data.server;
-        fxData.resources = data.resources.length;
-        fxData.onesync = (data.vars && data.vars.onesync_enabled === 'true')? 'enabled' : 'disabled';
-        fxData.maxClients = (data.vars && data.vars.sv_maxClients)? data.vars.sv_maxClients : '--';
-        fxData.tags = (data.vars && data.vars.tags)? data.vars.tags : '--';
-        fxData.error = false;
+        infoData = res.data;
     } catch (error) {
-        logError('Error getting FXServer data', context);
+        logWarn('Failed to get FXServer information.', context);
         if(globals.config.verbose) dir(error);
-        fxData.error = `Failed to retrieve FXServer data. <br>The server must be online for this operation. <br>Check the terminal for more information (if verbosity is enabled)`;
+        return {error: `Failed to retrieve FXServer data. <br>The server must be online for this operation. <br>Check the terminal for more information (if verbosity is enabled)`};
     }
 
-    return fxData;
+    //Helper function
+    const getBuild = (ver)=>{
+        try {
+            let regex = /v1\.0\.0\.(\d{4,5})\s*/;
+            let res = regex.exec(ver);
+            return parseInt(res[1]);
+        } catch (error) {
+            return 0;
+        }
+    }
+
+    //Processing result
+    try {
+        let versionWarning;
+        if(getBuild(infoData.server) < 1543){
+            versionWarning = `<span class="badge badge-danger"> INCOMPATIBLE </span>`;
+        }
+
+        let fxData = {
+            error: false,
+            statusColor: 'success',
+            status: ' ONLINE ',
+            version: infoData.server,
+            versionWarning: versionWarning || '',
+            resources: infoData.resources.length,
+            onesync: (infoData.vars && infoData.vars.onesync_enabled === 'true')? 'enabled' : 'disabled',
+            maxClients: (infoData.vars && infoData.vars.sv_maxClients)? infoData.vars.sv_maxClients : '--',
+        };
+
+        return fxData;
+    } catch (error) {
+        logWarn('Failed to process FXServer information.', context);
+        if(globals.config.verbose) dir(error);
+        return {error: `Failed to process FXServer data. <br>Check the terminal for more information (if verbosity is enabled)`};
+    }
 }
 
 
@@ -191,7 +215,8 @@ async function getHostData(){
         let userInfo = os.userInfo()
         let cpus = os.cpus();
 
-        hostData.osType = `${os.type()} (${os.platform()})`;
+        hostData.nodeVersion = process.version;
+        hostData.osType = `${os.type()} (${os.platform()}/${process.arch})`;
         hostData.osRelease = `${os.release()}`;
         hostData.username = `${userInfo.username}`;
         hostData.cpus = `${cpus.length}x ${cpus[0].speed} MHz`;
@@ -204,4 +229,32 @@ async function getHostData(){
     }
 
     return hostData;
+}
+
+
+//================================================================
+/**
+ * Gets txAdmin Data
+ */
+async function gettxAdminData(){
+    let humanizeOptions = {
+        language: globals.translator.t('$meta.humanizer_language'),
+        round: true,
+        units: ['d', 'h', 'm'],
+        fallbacks: ['en']
+    }
+
+    let txadminData = {
+        uptime: humanizeDuration(process.uptime()*1000, humanizeOptions),
+        fullCrashes: globals.monitor.globalCounters.fullCrashes,
+        partialCrashes: globals.monitor.globalCounters.partialCrashes,
+        timeout: globals.monitor.config.timeout,
+        failures: globals.monitor.config.restarter.failures,
+        schedule: globals.monitor.config.restarter.schedule.join(', '),
+        buildPath: globals.fxRunner.config.buildPath,
+        basePath: globals.fxRunner.config.basePath,
+        cfgPath: globals.fxRunner.config.cfgPath,
+    };
+
+    return txadminData;
 }
