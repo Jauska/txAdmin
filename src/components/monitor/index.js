@@ -1,49 +1,42 @@
 //Requires
+const modulename = 'Monitor';
 const axios = require("axios");
-const bigInt = require("big-integer");
-const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../../extras/console');
+const { dir, log, logOk, logWarn, logError } = require('../../extras/console')(modulename);
 const helpers = require('../../extras/helpers');
 const HostCPUStatus = require('./hostCPUStatus');
 const TimeSeries = require('./timeSeries');
-const context = 'Monitor';
 
+//Helpers
+const now = () => { return Math.round(Date.now() / 1000) };
+const isUndefined = (x) => { return (typeof x === 'undefined') };
 
 module.exports = class Monitor {
     constructor(config) {
         this.config = config;
 
-        //Checking config
-        if(this.config.restarter.cooldown < 15){
-            logError('The monitor.restarter.cooldown setting must be 15 seconds or more.', context);
-            process.exit();
-        }
-        if(this.config.restarter.failures < 15){
-            logError('The monitor.restarter.failures setting must be 15 seconds or more.', context);
-            process.exit();
-        }
+        //Checking config validity
+        if(this.config.cooldown < 15) throw new Error('The monitor.cooldown setting must be 15 seconds or higher.');
+        if(this.config.healthCheck.failThreshold < 10) throw new Error('The monitor.healthCheck.failThreshold setting must be 10 or higher.');
+        if(this.config.healthCheck.failLimit < 180) throw new Error('The monitor.healthCheck.failLimit setting must be 180 or higher.');
+        if(this.config.heartBeat.failThreshold < 10) throw new Error('The monitor.heartBeat.failThreshold setting must be 10 or higher.');
+        if(this.config.heartBeat.failLimit < 30) throw new Error('The monitor.heartBeat.failLimit setting must be 30 or higher.');
 
         //Setting up
-        logOk('::Started', context);
+        logOk('Started');
         this.cpuStatusProvider = new HostCPUStatus();
-        this.timeSeries = new TimeSeries(`${globals.config.serverProfilePath}/data/players.json`, 10, 60*60*24);
-        this.lastAutoRestart = null;
-        this.failCounter = 0;
-        this.lastHeartBeat = 0;
+        this.timeSeries = new TimeSeries(`${globals.info.serverProfilePath}/data/players.json`, 10, 60*60*24);
+        this.schedule = null;
         this.globalCounters = {
             hitches: [],
             fullCrashes: 0,
             partialCrashes: 0,
         }
-        this.schedule = null;
-        this.statusServer = {
-            online: false,
-            ping: false,
-            players: []
-        }
+        this.resetMonitorStats();
         this.buildSchedule();
 
         //Cron functions
         setInterval(() => {
+            this.sendHealthCheck();
             this.refreshServerStatus();
         }, 1000);
         setInterval(() => {
@@ -67,7 +60,7 @@ module.exports = class Monitor {
      * Build schedule
      */
     buildSchedule(){
-        if(!Array.isArray(this.config.restarter.schedule) || !this.config.restarter.schedule.length){
+        if(!Array.isArray(this.config.restarterSchedule) || !this.config.restarterSchedule.length){
             this.schedule = false;
             return;
         }
@@ -92,7 +85,7 @@ module.exports = class Monitor {
             }
         }
 
-        let times = helpers.parseSchedule(this.config.restarter.schedule);
+        let times = helpers.parseSchedule(this.config.restarterSchedule);
         let schedule = [];
         let announceMinutes = [30, 15, 10, 5, 4, 3, 2, 1];
         times.forEach((time)=>{
@@ -108,11 +101,11 @@ module.exports = class Monitor {
                 });
             } catch (error) {
                 let timeJSON = JSON.stringify(time);
-                if(globals.config.verbose) logWarn(`Error building restart schedule for time '${timeJSON}':\n ${error.message}`, context);
+                if(GlobalData.verbose) logWarn(`Error building restart schedule for time '${timeJSON}':\n ${error.message}`);
             }
         })
 
-        if(globals.config.verbose) schedule.forEach(el => { dir(el.messages) });
+        if(GlobalData.verbose) dir(schedule.map(el => { return el.messages }));
         this.schedule = (schedule.length)? schedule : false;
     }
 
@@ -127,7 +120,7 @@ module.exports = class Monitor {
 
         try {
             //Check schedule for current time
-            //FIXME: returns only the first result, not necessarily the most important
+            //NOTE: returns only the first result, not necessarily the most important
             // eg, when a restart message comes before a restart command
             let now = new Date;
             let action = this.schedule.find((time) => {
@@ -150,7 +143,6 @@ module.exports = class Monitor {
     }
 
 
-
     //================================================================
     /**
      * Check cooldown and Restart the FXServer
@@ -160,87 +152,22 @@ module.exports = class Monitor {
     async restartFXServer(reason, reasonTranslated){
         //sanity check
         if(globals.fxRunner.fxChild === null){
-            logWarn('Server not started, no need to restart', context);
-            return false;
-        }
-
-        //Cooldown check
-        let elapsed = Math.round(Date.now()/1000) - globals.fxRunner.tsChildStarted;
-        if(elapsed < this.config.restarter.cooldown){
-            if(globals.config.verbose) logWarn(`(Cooldown: ${elapsed}/${this.config.restarter.cooldown}s) restartFXServer() awaiting restarter cooldown.`, context);
+            logWarn('Server not started, no need to restart');
             return false;
         }
 
         //Restart server
         let message = `Restarting server (${reason}).`;
-        logWarn(message, context);
+        logWarn(message);
         globals.logger.append(`[MONITOR] ${message}`);
         globals.fxRunner.restartServer(reasonTranslated);
     }
 
 
     //================================================================
-    //FIXME: temp
-    handleHeartBeat(body){
-        this.lastHeartBeat = Math.round(Date.now()/1000);
-    }
-
-
-    //================================================================
-    handleFailure(errorMessage){
-        let now = Math.round(Date.now()/1000)
-        let elapsed = Math.round(Date.now()/1000) - globals.fxRunner.tsChildStarted;
-
-        //Check cooldown
-        if(elapsed < this.config.restarter.cooldown){
-            if(globals.config.verbose) logWarn(`(Cooldown: ${elapsed}/${this.config.restarter.cooldown}s) Failed to connect to server. Still in cooldown.`, context);
-            return false;
-        }
-
-        //TODO: check if fxChild is closed, in this case no need to wait the failure count
-
-        //Count failure
-        this.failCounter++;
-        this.timeSeries.add(0);
-        if(globals.config.verbose || this.failCounter > 10){
-            logWarn(`(${this.failCounter}/${this.config.restarter.failures}) FXServer is not responding! (${errorMessage})`, context);
-        }
-
-        //Check if it's time to restart the server
-        if(
-            this.config.restarter.failures !== -1 &&
-            this.failCounter >= this.config.restarter.failures
-        ){
-            if((now - this.lastHeartBeat) > 30){
-                this.globalCounters.fullCrashes++;
-                this.restartFXServer(
-                    'server crash detected',
-                    globals.translator.t('restarter.crash_detected')
-                );
-            }else if(this.failCounter === 60*4){ //after 4 minutes
-                let tOptions = {
-                    servername: globals.config.serverName
-                }
-                globals.discordBot.sendAnnouncement(globals.translator.t('restarter.partial_crash_warn_discord', tOptions));
-                let chatMsg = globals.translator.t('restarter.partial_crash_warn')
-                globals.fxRunner.srvCmd(`txaBroadcast "txAdmin" "${chatMsg}"`);
-            }else if(this.failCounter === 60*5){ //after 5 minutes
-                this.globalCounters.partialCrashes++;
-                this.restartFXServer(
-                    'server partial crash detected',
-                    globals.translator.t('restarter.crash_detected')
-                );
-            }else{
-                if(globals.config.verbose) logWarn(`Above restarter limit for HealthCheck failures. Skipping restart since last HeartBeat was less than 30s ago.`);
-            }
-        }
-    }
-
-
-    //================================================================
     processFXServerHitch(hitchTime){
         let hitch = {
-            ts: Math.round(Date.now()/1000),
+            ts: now(),
             hitchTime: parseInt(hitchTime)
         }
         this.globalCounters.hitches.push(hitch);
@@ -251,31 +178,29 @@ module.exports = class Monitor {
 
 
     //================================================================
-    clearFXServerHitches(){
+    resetMonitorStats(){
         this.globalCounters.hitches = [];
+
+        this.currentStatus = 'OFFLINE' // options: OFFLINE, ONLINE, PARTIAL
+        this.lastSuccessfulHealthCheck = null; //to see if its above limit
+        this.lastStatusWarningMessage = null; //to prevent spamming 
+        this.lastSuccessfulHeartBeat = null; //to see if its above limit
+        this.lastHealthCheckErrorMessage = null; //to print warning
+        this.healthCheckRestartWarningIssued = false; //to prevent spamming 
+
+        //to reset active player list (if module is already loaded)
+        if(globals.playerController) globals.playerController.processHeartBeat([]); 
     }
 
 
     //================================================================
-    /**
-     * Refreshes the Server Status.
-     */
-    async refreshServerStatus(){
+    async sendHealthCheck(){
         //Check if the server is supposed to be offline
-        if(globals.fxRunner.fxChild === null || globals.fxRunner.fxServerPort === null){
-            this.statusServer = {
-                online: false,
-                ping: false,
-                players: []
-            }
-            return;
-        }
+        if(globals.fxRunner.fxChild === null || globals.fxRunner.fxServerPort === null) return;
 
         //Setup do request e variáveis iniciais
-        let timeStart = Date.now()
-        let players = [];
         let requestOptions = {
-            url: `http://localhost:${globals.fxRunner.fxServerPort}/players.json`,
+            url: `http://localhost:${globals.fxRunner.fxServerPort}/dynamic.json`,
             method: 'get',
             responseType: 'json',
             responseEncoding: 'utf8',
@@ -286,41 +211,154 @@ module.exports = class Monitor {
         //Make request
         try {
             const res = await axios(requestOptions);
-            players = res.data;
-            if(!Array.isArray(players)) throw new Error("FXServer's players endpoint didnt return a JSON array.");
+            if(typeof res.data !== 'object') throw new Error("FXServer's dynamic endpoint didn't return a JSON object.");
+            if(isUndefined(res.data.hostname) || isUndefined(res.data.clients)) throw new Error("FXServer's dynamic endpoint didn't return complete data.");
         } catch (error) {
-            this.handleFailure(error.message);
-            this.statusServer = {
-                online: false,
-                ping: false,
-                players: []
+            this.lastHealthCheckErrorMessage = error.message;
+            return;
+        }
+        
+        //Set variables
+        this.healthCheckRestartWarningIssued = false;
+        this.lastHealthCheckErrorMessage = false;
+        this.lastSuccessfulHealthCheck = now();
+    }
+
+
+    //================================================================
+    /**
+     * Refreshes the Server Status and calls for a restart if neccessary.
+     *  - HealthCheck: performing an GET to the /dynamic.json file
+     *  - HeartBeat: receiving an intercom POST from txAdminClient containing playerlist 
+     */
+    refreshServerStatus(){
+        //Check if the server is supposed to be offline
+        if(globals.fxRunner.fxChild === null) return this.resetMonitorStats();
+
+        //Helper func
+        const cleanET = (et) => {return (et > 99999)? '--' : et};
+
+        //Get elapsed times & process status
+        let currTimestamp = now();
+        let elapsedHealthCheck = currTimestamp - this.lastSuccessfulHealthCheck;
+        let healthCheckFailed = (elapsedHealthCheck > this.config.healthCheck.failThreshold);
+        let elapsedHeartBeat = currTimestamp - this.lastSuccessfulHeartBeat;
+        let heartBeatFailed = (elapsedHeartBeat > this.config.heartBeat.failThreshold);
+        let processUptime = globals.fxRunner.getUptime();
+
+        //Check if its online and return
+        if(
+            this.lastSuccessfulHealthCheck && !healthCheckFailed &&
+            this.lastSuccessfulHeartBeat && !heartBeatFailed
+        ){
+            this.currentStatus = 'ONLINE';
+            return;
+        }
+
+        //Now to the (un)fun part: if the status != healthy
+        this.currentStatus = (healthCheckFailed && heartBeatFailed)? 'OFFLINE' : 'PARTIAL';
+
+        //Check if still in cooldown
+        if(processUptime < this.config.cooldown){
+            if(GlobalData.verbose && processUptime > 5 && currTimestamp - this.lastStatusWarningMessage > 10){
+                logWarn(`(HB:${cleanET(elapsedHeartBeat)}|HC:${cleanET(elapsedHealthCheck)}) FXServer is not responding. Still in cooldown.`)
+                this.lastStatusWarningMessage = now();
             }
             return;
         }
-        this.failCounter = 0;
 
-        //Remove endpoint and add steam profile link
-        players.forEach(player => {
-            player.steam = false;
-            player.identifiers.forEach((identifier) => {
-                if(identifier.startsWith('steam:')){
-                    try {
-                        let decID = new bigInt(identifier.slice(6), 16).toString();
-                        player.steam = `https://steamcommunity.com/profiles/${decID}`;
-                    } catch (error) {}
-                }
-            });
-            delete player.endpoint;
-        });
-
-        //Save status cache and print output
-        this.statusServer = {
-            online: true,
-            ping: Date.now() - timeStart,
-            players: players
+        //Log failure message
+        if(
+            (GlobalData.verbose && (currTimestamp - this.lastStatusWarningMessage) > 15) ||
+            ((currTimestamp - this.lastStatusWarningMessage) > 30)
+        ){
+            let msg = (healthCheckFailed)
+                        ? `(HB:${cleanET(elapsedHeartBeat)}|HC:${cleanET(elapsedHealthCheck)}) FXServer is not responding. (${this.lastHealthCheckErrorMessage})` 
+                        : `(HB:${cleanET(elapsedHeartBeat)}|HC:${cleanET(elapsedHealthCheck)}) FXServer is not responding. (HB Failed)`; 
+            this.lastStatusWarningMessage = now();
+            logWarn(msg);
         }
-        this.timeSeries.add(players.length);
+        
+        //Check if fxChild is closed, in this case no need to wait the failure count
+        let processStatus = globals.fxRunner.getStatus();
+        if(processStatus == 'closed'){
+            this.globalCounters.fullCrashes++;
+            this.restartFXServer(
+                'server close detected',
+                globals.translator.t('restarter.crash_detected')
+            );
+            return;
+        }
+
+        //If http partial crash, warn 1 minute before
+        if(
+            elapsedHealthCheck > (this.config.healthCheck.failLimit - 60) && 
+            !this.healthCheckRestartWarningIssued &&
+            !(elapsedHeartBeat > this.config.heartBeat.failLimit)
+        ){
+            let tOptions = {
+                servername: globals.config.serverName
+            }
+            globals.discordBot.sendAnnouncement(globals.translator.t('restarter.partial_crash_warn_discord', tOptions));
+            let chatMsg = globals.translator.t('restarter.partial_crash_warn');
+            globals.fxRunner.srvCmd(`txaBroadcast "txAdmin" "${chatMsg}"`);
+            this.healthCheckRestartWarningIssued = now();
+        }
+
+        //Give a bit more time to the very very slow servers to come up
+        //They usually start replying to healthchecks way before sending heartbeats
+        let maxHBCooldownTolerance = 180;
+        if(
+            this.lastSuccessfulHeartBeat === null &&
+            processUptime < maxHBCooldownTolerance &&
+            elapsedHealthCheck < this.config.healthCheck.failLimit
+        ){
+            let msg = `Still waiting for the first HeartBeat. Process started ${processUptime}s ago.`;
+            if(processUptime % 15 == 0) logWarn(msg);
+            return;
+        }
+
+        //Check if already over the limit 
+        if(
+            elapsedHealthCheck > this.config.healthCheck.failLimit ||
+            elapsedHeartBeat > this.config.heartBeat.failLimit
+        ){
+            //TODO: improve the message telling what crashed?
+            if(elapsedHealthCheck > this.config.healthCheck.failLimit){
+                this.globalCounters.partialCrashes++;
+                this.restartFXServer(
+                    'server partial crash detected',
+                    globals.translator.t('restarter.crash_detected')
+                );
+            }else{
+                this.globalCounters.fullCrashes++;
+                this.restartFXServer(
+                    'server crash detected',
+                    globals.translator.t('restarter.crash_detected')
+                );
+            }
+        }
     }
 
+
+    //================================================================
+    handleHeartBeat(postData){
+        //Sanity Check
+        if(!Array.isArray(postData.players)){
+            if(GlobalData.verbose) logWarn(`Received an invalid HeartBeat.`);
+            return;
+        }
+
+        //Cleaning playerlist
+        let playerList = postData.players.map(player => {
+            player.id = parseInt(player.id);
+            return player;
+        });
+
+        //The rest...
+        this.lastSuccessfulHeartBeat = now();
+        this.timeSeries.add(playerList.length);
+        globals.playerController.processHeartBeat(playerList);
+    }
 
 } //Fim Monitor()

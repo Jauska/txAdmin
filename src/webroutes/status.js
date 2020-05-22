@@ -1,18 +1,16 @@
 //Requires
+const modulename = 'WebServer:GetStatus';
 const os = require('os');
-const xss = require("xss");
 const clone = require('clone');
-const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../extras/console');
-const context = 'WebServer:GetStatus';
+const { dir, log, logOk, logWarn, logError } = require('../extras/console')(modulename);
 
 
 /**
  * Getter for all the log/server/process data
- * @param {object} res
- * @param {object} req
+ * @param {object} ctx
  */
-module.exports = async function action(res, req) {
-    res.send({
+module.exports = async function GetStatus(ctx) {
+    return ctx.send({
         meta: prepareMetaData(),
         host: prepareHostData(),
         status: prepareServerStatus(),
@@ -26,7 +24,6 @@ module.exports = async function action(res, req) {
  * Returns the fxserver's data
  */
 function prepareServerStatus() {
-    let dataServer = clone(globals.monitor.statusServer);
     let fxServerHitches = clone(globals.monitor.globalCounters.hitches);
 
     //processing hitches
@@ -51,10 +48,18 @@ function prepareServerStatus() {
     }
 
     //preparing the rest of the strings
-    let statusClass = (dataServer.online) ? 'success' : 'danger';
-    let statusText = (dataServer.online) ? 'ONLINE' : 'OFFLINE';
-    let ping = (dataServer.online && typeof dataServer.ping !== 'undefined') ? dataServer.ping + 'ms' : '--';
-    let players = (dataServer.online && typeof dataServer.players !== 'undefined') ? dataServer.players.length : '--';
+    let monitorStatus = globals.monitor.currentStatus || '??';
+    let monitorStatusClass;
+    if(monitorStatus == 'ONLINE'){
+        monitorStatusClass = 'success';
+    }else if(monitorStatus == 'PARTIAL'){
+        monitorStatusClass = 'warning';
+    }else if(monitorStatus == 'OFFLINE'){
+        monitorStatusClass = 'danger';
+    }else{
+        monitorStatusClass = 'dark';
+    }
+    let processStatus = globals.fxRunner.getStatus();
 
     let logFileSize = (
         globals.fxRunner &&
@@ -62,19 +67,11 @@ function prepareServerStatus() {
         globals.fxRunner.consoleBuffer.logFileSize
     )? globals.fxRunner.consoleBuffer.logFileSize : '--';
 
-    let injectedResources = (
-        globals.fxRunner &&
-        globals.fxRunner.extResources &&
-        Array.isArray(globals.fxRunner.extResources)
-    )? globals.fxRunner.extResources.length : '--';
 
-    let out = `<strong>Status: <span class="badge badge-${statusClass}">${statusText}</span> </strong><br>
-                <strong>Ping (localhost):</strong> ${ping}<br>
-                <strong>Players:</strong> ${players}<br>
+    let out = `<strong>Monitor Status: <span class="badge badge-${monitorStatusClass}"> ${monitorStatus} </span> </strong><br>
+                <strong>Process Status:</strong> ${processStatus}<br>
                 <strong>Hitch Time:</strong> ${hitches}<br>
-                <strong>Log Size:</strong> ${logFileSize}<br>
-                <strong>Resources Injected:</strong> ${injectedResources}`;
-
+                <strong>Log Size:</strong> ${logFileSize}`;
     return out;
 }
 
@@ -109,8 +106,8 @@ function prepareHostData() {
         }
 
     } catch (error) {
-        if (globals.config.verbose) {
-            logError('Failed to execute prepareHostData()', context);
+        if (GlobalData.verbose) {
+            logError('Failed to execute prepareHostData()');
             dir(error);
         }
         return {
@@ -129,39 +126,13 @@ function prepareHostData() {
 
 //==============================================================
 /**
- * Returns the html playerlist
+ * Returns the activePlayers list in /playerlist.json compatible-ish format
+ * 
+ * FIXME: This is very wasteful, we need to start only sending the playerlist diff for the admins.
+ *        Could be done via socket.io, and then playerlist changed would push update events
  */
 function preparePlayersData() {
-    let dataServer = clone(globals.monitor.statusServer);
-
-    if (!dataServer.players.length) return '<strong>No players Online.</strong>';
-
-    let out = '';
-    dataServer.players.forEach(player => {
-        let pingClass;
-        player.ping = parseInt(player.ping);
-        if (player.ping < 0) {
-            pingClass = 'muted';
-            player.ping = '??';
-        } else if (player.ping < 60) {
-            pingClass = 'success';
-        } else if (player.ping < 100) {
-            pingClass = 'warning';
-        } else {
-            pingClass = 'danger';
-        }
-        let paddedPing = player.ping.toString().padStart(3, 'x').replace(/x/g, '&nbsp;');
-        let maxNameSize = 22;
-        let name = (player.name.length > maxNameSize)? player.name.slice(0, maxNameSize-3)+'...' : player.name;
-        out += `<div class="clearfix mt-3 playerlist">
-                    <span class="pping text-${pingClass}">${paddedPing}</span>
-                    <span class="pname">${xss(name)}</span>
-                    <a onclick="showPlayer(${xss(player.id)})"><span class="badge badge-primary float-right">MORE</span></a>
-                </div>`;
-
-    });
-
-    return out;
+    return globals.playerController.getPlayerList();
 }
 
 
@@ -170,9 +141,16 @@ function preparePlayersData() {
  * Returns the page metadata (title and icon)
  */
 function prepareMetaData() {
-    let dataServer = clone(globals.monitor.statusServer);
+    let favicon;
+    if(globals.monitor.currentStatus == 'ONLINE'){
+        favicon = 'favicon_online';
+    }else if(globals.monitor.currentStatus == 'PARTIAL'){
+        favicon = 'favicon_partial';
+    }else{
+        favicon = 'favicon_offline';
+    }
     return {
-        favicon: (dataServer.online) ? 'favicon_on' : 'favicon_off',
-        title: (dataServer.online) ? `(${dataServer.players.length}) txAdmin` : 'txAdmin'
+        favicon,
+        title: (globals.monitor.currentStatus == 'ONLINE') ? `(${globals.playerController.activePlayers.length}) txAdmin` : 'txAdmin'
     };
 }

@@ -1,8 +1,7 @@
 //Requires
-const xss = require("xss");
-const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../extras/console');
-const webUtils = require('./webUtils.js');
-const context = 'WebServer:ServerLog';
+const modulename = 'WebServer:ServerLog';
+const xss = require('../extras/xss')();
+const { dir, log, logOk, logWarn, logError } = require('../extras/console')(modulename);
 
 //Helper functions
 const isUndefined = (x) => { return (typeof x === 'undefined') };
@@ -10,34 +9,32 @@ const isUndefined = (x) => { return (typeof x === 'undefined') };
 
 /**
  * Returns the output page containing the admin log.
- * @param {object} res
- * @param {object} req
+ * @param {object} ctx
  */
-module.exports = async function action(res, req) {
+module.exports = async function ServerLog(ctx) {
     //If page
-    if(isUndefined(req.query.offset)){
-        let log = processLog(globals.intercomTempLog.slice(-100));
+    if(isUndefined(ctx.query.offset)){
+        let log = processLog(globals.databus.serverLog.slice(-100));
         let renderData = {
             headerTitle: 'Server Log',
-            offset: globals.intercomTempLog.length,
+            offset: globals.databus.serverLog.length,
             log
         }
-        let out = await webUtils.renderMasterView('serverLog', req.session, renderData);
-        return res.send(out);
+        return ctx.utils.render('serverLog', renderData);
 
     //If offset
-    }else if(parseInt(req.query.offset) !== NaN){
-        if(req.query.offset === globals.intercomTempLog.length){
-            return res.send({offset: globals.intercomTempLog.length, log : false});
+    }else if(parseInt(ctx.query.offset) !== NaN){
+        if(ctx.query.offset === globals.databus.serverLog.length){
+            return ctx.send({offset: globals.databus.serverLog.length, log : false});
         }else{
-            let log = processLog(globals.intercomTempLog.slice(req.query.offset));
-            return res.send({offset: globals.intercomTempLog.length, log});
+            let log = processLog(globals.databus.serverLog.slice(ctx.query.offset));
+            return ctx.send({offset: globals.databus.serverLog.length, log});
         }
 
     //If null
     }else{
-        let log = processLog(globals.intercomTempLog.slice(-100));
-        return res.send({offset: globals.intercomTempLog.length, log});
+        let log = processLog(globals.databus.serverLog.slice(-100));
+        return ctx.send({offset: globals.databus.serverLog.length, log});
     }
 };
 
@@ -141,8 +138,8 @@ function processEventTypes(event){
         return `txAdminClient Debug Message: <span class="text-warning">${xss(message)}</span>`;
 
     }else{
-        if(globals.config.verbose){
-            logWarn(`Unrecognized event: ${event.action}`, context);
+        if(GlobalData.verbose){
+            logWarn(`Unrecognized event: ${event.action}`);
             dir(event)
         }
         return `${event.action}`;

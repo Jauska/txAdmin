@@ -1,6 +1,6 @@
 {
-    "version": "1.15.0",
-    "changelog": "Deprecated Message. Please Update.",
+    "version": "2.4.2",
+    "changelog": "Deprecated Message. Please Update to v2.",
     "allVersions": [
         {
             "version": "1.0.1",
@@ -137,6 +137,46 @@
         {
             "version": "1.15.0",
             "changelog": "Fixed console colors. Added custom command logging. Added explosion types to the server log. Added more information to the diagnostics page. Improved verbosity. Added Finnish, Turkish and Latvian languages."
+        },
+        {
+            "version": "2.0.0",
+            "changelog": "Integrated with FiveM! New Responsive Interface! New Auth system. Migrated from Express to Koa. Got rid of setup, and admin-add scripts. Changed the `data` folder location. And many many more tweaks and improvements!"
+        },
+        {
+            "version": "2.0.1",
+            "changelog": "Increased time tolerances for CitizenFX login. Minor message tweaks."
+        },
+        {
+            "version": "2.1.0",
+            "changelog": "Improved onboarding process with an Setup Wizard. Minor tweaks."
+        },
+        {
+            "version": "2.1.1",
+            "changelog": "Removed maxsize for some Setup Wizard inputs."
+        },
+        {
+            "version": "2.2.0",
+            "changelog": "Fixed playerlist and improved diagnostics and error information."
+        },
+        {
+            "version": "2.3.0",
+            "changelog": "Reworked the entire monitor/restarter module."
+        },
+        {
+            "version": "2.3.1",
+            "changelog": "Fixed /status, fixed ping colors."
+        },
+        {
+            "version": "2.4.0",
+            "changelog": "Added FXServer update checker, improved some error messages, increased heartbeat cooldown limit for low-spec machines and update packages."
+        },
+        {
+            "version": "2.4.1",
+            "changelog": "Minor fixes to the FXServer update checker."
+        },
+        {
+            "version": "2.4.2",
+            "changelog": "Added customizable /status messages. Security Updates: fixed escaping issues, restricted more the settings.view permission, upgraded packages."
         }
     ]
 }

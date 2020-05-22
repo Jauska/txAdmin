@@ -1,26 +1,48 @@
 //Requires
+const modulename = 'WebServer:updateChecker';
 const axios = require("axios");
-const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../extras/console');
-const context = 'WebServer:updateChecker';
+const { dir, log, logOk, logWarn, logError } = require('../extras/console')(modulename);
 
+//Helpers
+const now = () => { return Math.round(Date.now() / 1000) };
+const anyUndefined = (...args) => { return [...args].some(x => (typeof x === 'undefined')) };
+
+/*
+    TODO:
+    Create an page with the changelog, that queries for the following endpoint and caches it for 15 minutes:
+        https://changelogs-live.fivem.net/api/changelog/versions/2385/2375?tag=server
+    Maybe even grab the data from commits:
+        https://changelogs-live.fivem.net/api/changelog/versions/2077
+*/
 
 module.exports = async () => {
     try {
-        let rVer = await axios.get('https://raw.githubusercontent.com/tabarra/txAdmin/master/version.json');
-        rVer = rVer.data;
-        if(typeof rVer.version !== 'string' || typeof rVer.changelog !== 'string') throw new Error('Invalid remote version.json file');
-        globals.version.latest = rVer.version;
-        globals.version.changelog = rVer.changelog;
-        globals.version.allVersions = rVer.allVersions || [{version: rVer.version, changelog: rVer.changelog}];
-        if(globals.version.current !== rVer.version){
-            logWarn(`A new version (v${rVer.version}) is available for txAdmin - https://github.com/tabarra/txAdmin`, 'UpdateChecker');
+        //perform request - cache busting every ~1.4h
+        let osTypeApiUrl = (GlobalData.osType == 'windows')? 'win32' : 'linux';
+        let cacheBuster = Math.floor(now() / 5e3);
+        let reqUrl = `https://changelogs-live.fivem.net/api/changelog/versions/${osTypeApiUrl}/server?${cacheBuster}`;
+        let changelogReq = await axios.get(reqUrl);
+
+        //check response
+        if(!changelogReq.data) throw new Error('request failed');
+        changelog = changelogReq.data;
+        if(anyUndefined(changelog.recommended, changelog.optional, changelog.latest, changelog.critical)){
+            throw new Error('expected values not found');
+        }
+        if(GlobalData.verbose) log(`Checked for updates. Latest version is ${changelog.latest}`);
+        //FIXME: CHECK FOR BROKEN ORDER
+
+        //fill in databus
+        let osTypeRepoUrl = (GlobalData.osType == 'windows')? 'server_windows' : 'proot_linux';
+        globals.databus.updateChecker = {
+            artifactsLink: `https://runtime.fivem.net/artifacts/fivem/build_${osTypeRepoUrl}/master/?${cacheBuster}`,
+            recommended: parseInt(changelog.recommended),
+            optional: parseInt(changelog.optional),
+            latest: parseInt(changelog.latest),
+            critical: parseInt(changelog.critical),
         }
     } catch (error) {
-        logError(`Error checking for updates. Go to the github repository to see if you need one. Its likely an issue with your internet.`, 'UpdateChecker');
-        let ver = '9.9.9';
-        let msg = `Error checking for updates, if this error persists for more than 4 hours, <br> you probably need to update. <br> This is likely an issue with your server's internet or GitHub.  <br> Check out our <a href="https://discord.gg/f3TsfvD" target="_blank" class="alert-link">Discord Server</a> for more information.`;
-        globals.version.latest = ver;
-        globals.version.changelog = msg;
-        globals.version.allVersions = [{version: ver, changelog: msg}];
+        if(GlobalData.verbose) logWarn(`Failed to retrieve FXServer update data with error: ${error.message}`);
+        if(globals.databus.updateChecker === null) globals.databus.updateChecker = false;
     }
 }

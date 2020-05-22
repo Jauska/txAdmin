@@ -1,28 +1,25 @@
 //Requires
+const modulename = 'WebServer:Diagnostics';
 const os = require('os');
 const axios = require("axios");
 const bytes = require('bytes');
 const pidusageTree = require('pidusage-tree');
 const humanizeDuration = require('humanize-duration');
-const { dir, log, logOk, logWarn, logError, cleanTerminal } = require('../extras/console');
-const webUtils = require('./webUtils.js');
+const { dir, log, logOk, logWarn, logError } = require('../extras/console')(modulename);
 const Cache = require('../extras/dataCache');
-const context = 'WebServer:Diagnostics';
 
 let cache = new Cache(5);
 
 
 /**
  * Returns the output page containing the full report
- * @param {object} res
- * @param {object} req
+ * @param {object} ctx
  */
-module.exports = async function action(res, req) {
-    let cacheData = cache.get();
-    if(cacheData !== false){
-        cacheData.message = 'This page was cached in the last 5 seconds';
-        let out = await webUtils.renderMasterView('diagnostics', req.session, cacheData);
-        return res.send(out);
+module.exports = async function Diagnostics(ctx) {
+    let cachedData = cache.get();
+    if(cachedData !== false){
+        cachedData.message = 'This page was cached in the last 5 seconds';
+        return ctx.utils.render('diagnostics', cachedData);
     }
 
 
@@ -44,19 +41,19 @@ module.exports = async function action(res, req) {
     data.message = `Executed in ${timeElapsed} ms`;
 
     cache.set(data);
-    let out = await webUtils.renderMasterView('diagnostics', req.session, data);
-    return res.send(out);
+    return ctx.utils.render('diagnostics', data);
 };
 
 
 //================================================================
 /**
  * Gets the Processes Data.
+ * TODO: get process name with wmic
+ *       wmic PROCESS get "Name,ParentProcessId,ProcessId,CommandLine,CreationDate,UserModeTime,WorkingSetSize"
  */
 async function getProcessesData(){
     let procList = [];
     try {
-        let cpus = os.cpus();
         var processes = await pidusageTree(process.pid);
 
         //NOTE: Cleaning invalid proccesses that might show up in Linux
@@ -64,64 +61,41 @@ async function getProcessesData(){
             if(processes[pid] === null) delete processes[pid];
         });
 
-        let termPID = Object.keys(processes).find((pid) => { return processes[pid].ppid == process.pid});
-        let fxsvMainPID = Object.keys(processes).find((pid) => { return processes[pid].ppid == termPID});
-        let fxsvRepPID = Object.keys(processes).find((pid) => { return processes[pid].ppid == fxsvMainPID});
-
         //Foreach PID
         Object.keys(processes).forEach((pid) => {
             var curr = processes[pid];
 
             //Define name and order
             let procName;
-            let order;
+            let order = process.timestamp || 1;
             if(pid == process.pid){
-                procName = 'txAdmin';
+                procName = 'FxMonitor + txAdmin';
                 order = 0;
-
-            }else if(pid == termPID){
-                if(globals.config.osType === 'Linux' && Object.keys(processes).length == 2){
-                    procName = 'FXServer';
-                }else{
-                    procName = 'Terminal';
-                }
-                order = 1;
-
-            }else if(pid == fxsvMainPID){
-                procName = 'FXServer Main';
-                order = 2;
-
-            }else if(pid == fxsvRepPID){
-                procName = 'FXServer Dump';
-                order = 3;
-
+            }else if(curr.memory <= 10*1024*1024){
+                procName = 'FXServer MiniDump';
             }else{
-                procName = 'Unknown';
-                order = 9;
+                procName = 'FXServer';
             }
 
             procList.push({
                 pid: pid,
+                ppid: (curr.ppid == process.pid)? 'txAdmin' : curr.ppid,
                 name: procName,
-                cpu: (curr.cpu/cpus.length).toFixed(2) + '%',
+                cpu: (curr.cpu).toFixed(2) + '%',
                 memory: bytes(curr.memory),
                 order: order
             });
         });
 
     } catch (error) {
-        logError(`Error getting processes data.`, context);
-        if(globals.config.verbose) dir(error);
+        logError(`Error getting processes data.`);
+        if(GlobalData.verbose) dir(error);
     }
 
     //Sort procList array
     procList.sort(( a, b ) => {
-        if ( a.order < b.order ){
-            return -1;
-        }
-        if ( a.order > b.order ){
-            return 1;
-        }
+        if ( a.order < b.order )  return -1;
+        if ( a.order > b.order ) return 1;
         return 0;
     })
 
@@ -157,8 +131,8 @@ async function getFXServerData(){
         let res = await axios(requestOptions);
         infoData = res.data;
     } catch (error) {
-        logWarn('Failed to get FXServer information.', context);
-        if(globals.config.verbose) dir(error);
+        logWarn('Failed to get FXServer information.');
+        if(GlobalData.verbose) dir(error);
         return {error: `Failed to retrieve FXServer data. <br>The server must be online for this operation. <br>Check the terminal for more information (if verbosity is enabled)`};
     }
 
@@ -176,8 +150,17 @@ async function getFXServerData(){
     //Processing result
     try {
         let versionWarning;
-        if(getBuild(infoData.server) < 1543){
+        if(getBuild(infoData.server) !== GlobalData.fxServerVersion){
             versionWarning = `<span class="badge badge-danger"> INCOMPATIBLE </span>`;
+        }
+
+        let resourcesWarning;
+        if(infoData.resources.length <= 100){
+            resourcesWarning = '';
+        }else if(infoData.resources.length < 200){
+            resourcesWarning = `<span class="badge badge-warning"> HIGH </span>`;
+        }else{
+            resourcesWarning = `<span class="badge badge-danger"> VERY HIGH! </span>`;
         }
 
         let fxData = {
@@ -187,14 +170,16 @@ async function getFXServerData(){
             version: infoData.server,
             versionWarning: versionWarning || '',
             resources: infoData.resources.length,
+            resourcesWarning: resourcesWarning,
             onesync: (infoData.vars && infoData.vars.onesync_enabled === 'true')? 'enabled' : 'disabled',
             maxClients: (infoData.vars && infoData.vars.sv_maxClients)? infoData.vars.sv_maxClients : '--',
+            txAdminVersion: (infoData.vars && infoData.vars['txAdmin-version'])? infoData.vars['txAdmin-version'] : '--',
         };
 
         return fxData;
     } catch (error) {
-        logWarn('Failed to process FXServer information.', context);
-        if(globals.config.verbose) dir(error);
+        logWarn('Failed to process FXServer information.');
+        if(GlobalData.verbose) dir(error);
         return {error: `Failed to process FXServer data. <br>Check the terminal for more information (if verbosity is enabled)`};
     }
 }
@@ -223,8 +208,8 @@ async function getHostData(){
         hostData.memory = `${memUsage}% (${memUsed}/${memTotal} GB)`;
         hostData.error  = false;
     } catch (error) {
-        logError('Error getting Host data', context);
-        if(globals.config.verbose) dir(error);
+        logError('Error getting Host data');
+        if(GlobalData.verbose) dir(error);
         hostData.error = `Failed to retrieve host data. <br>Check the terminal for more information (if verbosity is enabled)`;
     }
 
@@ -238,21 +223,20 @@ async function getHostData(){
  */
 async function gettxAdminData(){
     let humanizeOptions = {
-        language: globals.translator.t('$meta.humanizer_language'),
         round: true,
-        units: ['d', 'h', 'm'],
-        fallbacks: ['en']
+        units: ['d', 'h', 'm']
     }
 
     let txadminData = {
         uptime: humanizeDuration(process.uptime()*1000, humanizeOptions),
+        cfxUrl: (GlobalData.cfxUrl)? `https://${GlobalData.cfxUrl}/` : '--',
         fullCrashes: globals.monitor.globalCounters.fullCrashes,
         partialCrashes: globals.monitor.globalCounters.partialCrashes,
         timeout: globals.monitor.config.timeout,
-        failures: globals.monitor.config.restarter.failures,
-        schedule: globals.monitor.config.restarter.schedule.join(', '),
-        buildPath: globals.fxRunner.config.buildPath,
-        basePath: globals.fxRunner.config.basePath,
+        cooldown: globals.monitor.config.cooldown,
+        schedule: globals.monitor.config.restarterSchedule.join(', ') || '--',
+        fxServerPath: GlobalData.fxServerPath,
+        serverDataPath: globals.fxRunner.config.serverDataPath,
         cfgPath: globals.fxRunner.config.cfgPath,
     };
 
